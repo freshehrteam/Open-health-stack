@@ -6,6 +6,13 @@ secrets.yaml
 secrets.yml
 !secrets.example.yaml
 !secrets.example.yml
+# The two rules above match by basename ANYWHERE, so they also swallowed
+# charts/health-stack/templates/secrets.yaml — a Helm *template* (no real
+# values) that rendered the credential Secrets. It sat untracked for weeks:
+# terraform apply from a local checkout worked, fresh clones did not. Chart
+# templates never hold real secrets (they render from values), so exempt them.
+!charts/*/templates/secrets.yaml
+!charts/*/templates/secrets.yml
 
 # ── openFHIR license (vendor-provided, never commit) ────────────────────
 docker/openfhir/license/*.json
