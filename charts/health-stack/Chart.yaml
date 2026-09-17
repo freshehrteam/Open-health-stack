@@ -13,7 +13,7 @@ type: application
 # release when an input changes, and for a local chart path that input is THIS
 # version — template/config edits without a bump make `terraform apply` report
 # "No changes" and the cluster silently keeps the old manifests.
-version: 0.4.2
+version: 0.4.3
 
 # The version of the app stack this chart deploys. Informational; the actual
 # image tags are set per-workload under `images.*` / `.image.tag` in values.yaml.

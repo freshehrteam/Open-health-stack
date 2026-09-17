@@ -1,0 +1,122 @@
+# ============================================================================
+# Scaleway (prod) values — k3s on Scaleway Instances.
+# Same topology as values-hetzner.yaml; only storage.className differs (must
+# match what the scaleway-csi driver registers — see
+# terraform/modules/scaleway-cloud-integration).
+#
+#   helm upgrade --install health-stack charts/health-stack \
+#     -n health-stack --create-namespace \
+#     -f charts/health-stack/values-scaleway.yaml \
+#     --set ingress.host=health.yourdomain.com
+# ============================================================================
+
+# The openFHIR engine always runs in-cluster. It REQUIRES the 'openfhir-license'
+# Secret — the engine will not start without it. Create it out-of-band:
+#   kubectl create secret generic openfhir-license -n health-stack \
+#     --from-file=openfhir-license.json=./docker/openfhir/license/openfhir-license.json
+
+storage:
+  className: scw-bssd
+
+ingress:
+  # Replace with your real DNS (must resolve to the Scaleway load balancer IP).
+  host: health.example.com
+  tls:
+    enabled: true
+    clusterIssuer: letsencrypt-prod
+    secretName: health-stack-tls
+  # ON here (unlike the chart default) because this is the environment actually
+  # published to the internet. HAPI and openFHIR have no auth of their own, so
+  # without this /fhir accepts anonymous writes — which reach EHRbase through
+  # the openFHIR interceptor, around EHRbase's own token validation. Enforced by
+  # ingress-nginx auth-url subrequests to oauth2-proxy (Bearer JWTs from the
+  # freshehr Keycloak realm). Get a token with the client_credentials flow:
+  #   terraform output -raw kc_api_client_secret   # then POST to
+  #   https://<domain>/auth/realms/freshehr/protocol/openid-connect/token
+  auth:
+    enabled: true
+
+# Let cert-manager + this ClusterIssuer be created by the chart if Terraform
+# didn't already create one. (Terraform's k8s-apps installs cert-manager itself;
+# leave create=false if you let Terraform own the issuer.)
+clusterIssuer:
+  create: false
+  name: letsencrypt-prod
+  email: you@example.com
+
+# Pin production image tags (CI pushes immutable tags — replace :latest).
+images:
+  hapi:
+    repository: ghcr.io/freshehrteam/hapi-openfhir
+    tag: "0.4.2"
+  ipsMappings:
+    repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings
+    tag: "0.4.2"
+  hades:
+    repository: ghcr.io/freshehrteam/hades
+    tag: "0.4.2"
+
+# Production HAPI sizing (matches patch-hapi-resources.yaml) + point HAPI at the
+# in-cluster openFHIR engine (local mode).
+hapi:
+  replicas: 2
+  env:
+    OPENFHIR_BASE_URL: http://openfhir:8080
+    HAPI_FHIR_IPS_ENABLED: "true"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+# hades sized for a SNOMED-loaded server: bigger heap, bigger PVC (snomed.db
+# Intl ≈ 3–4 GiB + fhir.db + headroom), limits fitting the DEV1-L agents
+# (4 vCPU / 8 GB) alongside HAPI's 1Gi×2. NOTE: like postgres.storage below,
+# raising `storage` does not resize an existing PVC — expand it directly
+# (scw-bssd volumes support online expansion):
+#   kubectl -n health-stack patch pvc hades-data \
+#     -p '{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}'
+hades:
+  env:
+    JAVA_OPTS: "-Xmx2g"
+  storage: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 3Gi   # -Xmx2g + metaspace/native headroom
+
+# Larger Postgres volume for prod (matches patch-postgres-storage.yaml: 20Gi).
+# There is ONE shared Postgres StatefulSet holding all three databases (ehrbase,
+# hapi, openfhir), so this is a single flat key.
+#
+# NOTE: storage is a volumeClaimTemplate field. Raising it here does NOT resize an
+# existing PVC — Kubernetes forbids that change on a live StatefulSet. On an
+# already-deployed cluster, expand the PVC directly (scw-bssd supports it):
+#   kubectl -n health-stack patch pvc data-postgres-0 \
+#     -p '{"spec":{"resources":{"requests":{"storage":"20Gi"}}}}'
+postgres:
+  storage: 20Gi
+
+# Secrets are created out-of-band in prod (secret manager / sealed-secrets /
+# External Secrets). Keep create=false. (Terraform's k8s-apps module flips
+# create=true and supplies every value from random_password resources.)
+#
+# The keycloak client secrets are blanked here ON PURPOSE: values.yaml carries
+# fixed dev defaults (mirroring the compose stack), and blanking them makes a
+# bare `helm install -f values-scaleway.yaml` fail the render (`required`) rather
+# than silently shipping dev credentials to the internet-facing environment.
+secrets:
+  create: false
+  values:
+    keycloak:
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ""
+      KC_DB_PASSWORD: ""
+      API_CLIENT_SECRET: ""
+      HAPI_SVC_SECRET: ""
+      OAUTH2_PROXY_CLIENT_SECRET: ""
+      OAUTH2_PROXY_COOKIE_SECRET: ""

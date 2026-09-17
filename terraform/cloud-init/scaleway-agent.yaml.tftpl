@@ -1,0 +1,51 @@
+#cloud-config
+# k3s agent bootstrap on Scaleway.
+# Templated vars: k3s_version, k3s_token, server_url, network_cidr.
+#
+# UNVERIFIED FIRST DRAFT — see scaleway-control-plane.yaml.tftpl for the
+# caveats on interface auto-detection and the metadata-service assumption;
+# both apply here identically.
+package_update: true
+packages:
+  - curl
+
+runcmd:
+  - |
+    PUBLIC_IFACE=$(ip -o -4 route show default | awk '{print $5}' | head -n1)
+    PRIVATE_IFACE=$(ls /sys/class/net | grep -v -E "^(lo|$PUBLIC_IFACE)$" | head -n1)
+    if [ -z "$PRIVATE_IFACE" ]; then
+      echo "FATAL: could not identify the private-network interface (only found: $(ls /sys/class/net | tr '\n' ' '))" >&2
+      exit 1
+    fi
+    cat > /etc/netplan/60-private.yaml <<NETPLAN
+    network:
+      version: 2
+      ethernets:
+        $PRIVATE_IFACE:
+          dhcp4: true
+    NETPLAN
+    chmod 600 /etc/netplan/60-private.yaml
+    netplan apply
+    for i in $(seq 1 60); do
+      ip -o -4 addr show "$PRIVATE_IFACE" 2>/dev/null | grep -q inet && break
+      sleep 2
+    done
+
+    NODE_IP=""
+    for i in $(seq 1 30); do
+      NODE_IP=$(ip -o -4 addr show "$PRIVATE_IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+      [ -n "$NODE_IP" ] && break
+      sleep 2
+    done
+    [ -n "$NODE_IP" ] || { echo "FATAL: could not determine private IPv4 on $PRIVATE_IFACE" >&2; exit 1; }
+
+    curl -sfL https://get.k3s.io | \
+      INSTALL_K3S_CHANNEL="${k3s_version}" \
+      K3S_URL="${server_url}" \
+      K3S_TOKEN="${k3s_token}" \
+      sh -s - agent \
+        --kubelet-arg=cloud-provider=external \
+        --node-ip=$NODE_IP \
+        --flannel-iface=$PRIVATE_IFACE
+  - until systemctl is-active --quiet k3s-agent; do sleep 5; done
+  - touch /tmp/k3s-ready

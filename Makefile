@@ -6,9 +6,10 @@ DOCKER_DIR := docker
 CHART := charts/health-stack
 NS := health-stack
 
-# Which chart values file to use for the helm targets (hetzner|dev).
+# Which chart values file to use for the helm targets (hetzner|scaleway|dev).
 ENV ?= hetzner
-# Only one cloud is supported (Hetzner k3s); see terraform/envs/.
+# The terraform-* targets below only drive Hetzner; terraform/envs/scaleway
+# exists but has no Makefile wiring yet — run terraform directly in that dir.
 TF_ENV := terraform/envs/hetzner
 
 # GHCR namespace + tag for the three custom images (see `make images`).
@@ -239,15 +240,15 @@ versions: ## Version drift report: declared pins (compose/Dockerfile/chart) vs r
 	@bash scripts/versions.sh
 
 ## ── Layer 2: Kubernetes (Helm chart) ─────────────────────────────────────────
-## Set ENV=hetzner|dev (default hetzner). Local iteration uses values-dev.
+## Set ENV=hetzner|scaleway|dev (default hetzner). Local iteration uses values-dev.
 
 .PHONY: helm-lint
 helm-lint: ## Lint the chart (default + each values file)
 	helm lint $(CHART)
-	@for f in hetzner dev; do echo "── $$f ──"; helm lint $(CHART) -f $(CHART)/values-$$f.yaml; done
+	@for f in hetzner scaleway dev; do echo "── $$f ──"; helm lint $(CHART) -f $(CHART)/values-$$f.yaml; done
 
 .PHONY: helm-render
-helm-render: ## Render the chart to stdout (ENV=hetzner|dev)
+helm-render: ## Render the chart to stdout (ENV=hetzner|scaleway|dev)
 	helm template health-stack $(CHART) -n $(NS) -f $(CHART)/values-$(ENV).yaml
 
 .PHONY: helm-dev
@@ -256,7 +257,7 @@ helm-dev: ## Install the chart on kind/minikube (values-dev; placeholder secrets
 		-f $(CHART)/values-dev.yaml
 
 .PHONY: helm-install
-helm-install: ## Install the chart (ENV=hetzner|dev; needs real Secrets pre-created; set DOMAIN=...)
+helm-install: ## Install the chart (ENV=hetzner|scaleway|dev; needs real Secrets pre-created; set DOMAIN=...)
 	helm upgrade --install health-stack $(CHART) -n $(NS) --create-namespace \
 		-f $(CHART)/values-$(ENV).yaml $(if $(DOMAIN),--set ingress.host=$(DOMAIN),)
 	@echo "Standalone install: create Secrets from $(CHART)/secrets.example.yaml + the openfhir-license Secret."

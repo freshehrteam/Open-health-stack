@@ -1,50 +1,60 @@
 # ============================================================================
-# Root: Hetzner (k3s on hcloud) — Layer 3, per-cloud root.
-# Wires the hcloud-* provisioning modules + the shared k8s-apps module (which
+# Root: Scaleway (k3s on Scaleway Instances) — Layer 3, per-cloud root.
+# Wires the scaleway-* provisioning modules + the shared k8s-apps module (which
 # installs add-ons and the health-stack Helm chart). Provider-agnostic parts live
-# in k8s-apps and charts/health-stack; hcloud specifics are the three hcloud-* modules.
+# in k8s-apps and charts/health-stack; Scaleway specifics are the four scaleway-*
+# modules.
 #
-# TWO-PHASE APPLY (kubeconfig must exist before the k8s/helm providers connect):
-#   terraform apply -var 'install_apps=false'   # phase 1: cluster only
-#   terraform apply                              # phase 2: add-ons + app chart
+# THREE-PHASE APPLY (kubeconfig must exist before the k8s/helm providers connect,
+# and the CCM must untaint nodes before the app chart's PVCs can bind):
+#   terraform apply -var 'install_apps=false' -var 'install_cloud_integration=false'
+#     # phase 1: cluster only — no kubeconfig yet, so no k8s/helm provider calls
+#   terraform apply -var 'install_apps=false'
+#     # phase 2: cloud-controller-manager + CSI driver — untaints nodes, no domain needed yet
+#   terraform apply
+#     # phase 3: add-ons + the health-stack chart (needs a real domain)
 # ============================================================================
 
 module "network" {
-  source = "../../modules/hcloud-network"
+  source = "../../modules/scaleway-network"
 
-  name         = var.cluster_name
-  network_zone = var.network_zone
-  network_cidr = var.network_cidr
-  subnet_cidr  = var.subnet_cidr
+  name        = var.cluster_name
+  region      = var.region
+  subnet_cidr = var.subnet_cidr
 }
 
 module "cluster" {
-  source = "../../modules/hcloud-cluster"
+  source = "../../modules/scaleway-cluster"
 
   name                = var.cluster_name
-  location            = var.location
+  zone                = var.zone
   image               = var.image
   control_plane_type  = var.control_plane_type
   agent_type          = var.agent_type
   agent_count         = var.agent_count
   ssh_public_key_path = var.ssh_public_key_path
   admin_ssh_cidrs     = var.admin_ssh_cidrs
+  k3s_api_cidrs       = var.k3s_api_cidrs
   k3s_version         = var.k3s_version
 
-  network_id   = module.network.network_id
-  subnet_cidr  = var.subnet_cidr
-  network_cidr = var.network_cidr
+  private_network_id = module.network.private_network_id
+  network_cidr       = var.network_cidr
 
   kubeconfig_path = var.kubeconfig_path
 }
 
 module "lb" {
-  source = "../../modules/hcloud-lb"
+  source = "../../modules/scaleway-lb"
 
-  name                  = var.cluster_name
-  location              = var.location
-  network_id            = module.network.network_id
-  target_label_selector = module.cluster.node_label_selector
+  name               = var.cluster_name
+  private_network_id = module.network.private_network_id
+
+  # Scaleway has no label-selector target — backends take the actual node
+  # private IPs, only known once the cluster module has been applied.
+  target_ips = concat(
+    [module.cluster.control_plane_private_ip],
+    module.cluster.agent_private_ips,
+  )
 
   http_node_port  = 30080
   https_node_port = 30443
@@ -59,9 +69,9 @@ module "lb" {
 # alphanumeric characters is ~190 bits — ample.
 #
 # ⚠ These land in terraform.tfstate in PLAINTEXT (a documented Terraform
-# behaviour — `sensitive` only masks CLI output). The state file is gitignored and
-# chmod 600, but treat it as a secret: anyone who can read it has every password.
-# For production, use External Secrets / Vault so Terraform never sees the values.
+# behaviour — `sensitive` only masks CLI output). State lives in the remote
+# Scaleway Object Storage backend (see versions.tf) — treat that bucket as a
+# secret store: anyone who can read it has every password.
 # Retrieve them with:  terraform output -json credentials | jq
 resource "random_password" "pg_superuser" {
   length  = 32
@@ -84,13 +94,6 @@ resource "random_password" "openfhir_db" {
   special = false
 }
 # ── Keycloak / OAuth2 credentials ────────────────────────────────────────────
-# EHRbase and the openFHIR engine validate Bearer tokens natively
-# (SECURITY_AUTHTYPE=OAUTH / openfhir.protected) and the /fhir ingress route
-# is gated by oauth2-proxy (auth-url), so the
-# old ehrbase_api / api_basic_auth basic-auth passwords are gone. What's needed
-# instead: the Keycloak admin + DB credentials, one client secret per OIDC
-# client (substituted into the realm import AND handed to each consumer, so
-# they always agree), and oauth2-proxy's cookie-encryption secret.
 resource "random_password" "keycloak_admin" {
   length  = 32
   special = false
@@ -120,20 +123,27 @@ resource "random_password" "oauth2_proxy_cookie" {
   special = false
 }
 
-# Hetzner-specific cloud-provider integration (CCM + CSI). Same install_apps
-# gating as module.apps below — both are meaningless before the cluster exists.
-module "hcloud_cloud_integration" {
-  source = "../../modules/hcloud-cloud-integration"
-  count  = var.install_apps ? 1 : 0
+# Scaleway-specific cloud-provider integration (CCM + CSI). Gated on its own
+# flag, not install_apps: it only needs the kubeconfig (module.cluster), not a
+# domain, and nodes stay tainted node.cloudprovider.kubernetes.io/uninitialized
+# (unschedulable) until it runs — so it belongs in its own phase 2, ahead of
+# the domain-dependent health-stack chart.
+module "scaleway_cloud_integration" {
+  source = "../../modules/scaleway-cloud-integration"
+  count  = var.install_cloud_integration ? 1 : 0
 
-  hcloud_token = var.hcloud_token
-  network_id   = module.network.network_id
+  scw_access_key  = var.scw_access_key
+  scw_secret_key  = var.scw_secret_key
+  scw_project_id  = var.scw_project_id
+  scw_region      = var.region
+  scw_zone        = var.zone
+  kubeconfig_path = var.kubeconfig_path
 
   depends_on = [module.cluster]
 }
 
 # Cluster add-ons (ingress-nginx + cert-manager) + the health-stack chart.
-# Provider-agnostic — the Hetzner-specific cloud integration above is a
+# Provider-agnostic — the Scaleway-specific cloud integration above is a
 # separate module so this one doesn't need to change per cloud.
 module "apps" {
   source = "../../modules/k8s-apps"
@@ -161,9 +171,9 @@ module "apps" {
   ingress_service_type = "NodePort"
 
   chart_path        = "${path.module}/../../../charts/health-stack"
-  chart_values_file = "${path.module}/../../../charts/health-stack/values-hetzner.yaml"
+  chart_values_file = "${path.module}/../../../charts/health-stack/values-scaleway.yaml"
 
-  # module.cluster: needs the kubeconfig to exist. module.hcloud_cloud_integration:
+  # module.cluster: needs the kubeconfig to exist. module.scaleway_cloud_integration:
   # needs the CSI driver up before the chart's PVCs try to bind.
-  depends_on = [module.cluster, module.hcloud_cloud_integration]
+  depends_on = [module.cluster, module.scaleway_cloud_integration]
 }

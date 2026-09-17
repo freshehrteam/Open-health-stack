@@ -1,0 +1,86 @@
+#cloud-config
+# k3s control-plane bootstrap on Scaleway.
+# Templated vars: k3s_version, k3s_token, network_cidr.
+#
+# UNVERIFIED FIRST DRAFT — Scaleway's private-network NIC name, its metadata
+# service response shape, and whether the netplan DHCP-route-to-metadata
+# workaround Hetzner needs also applies here have NOT been confirmed against
+# a real boot yet (only the moment a real `terraform apply` runs on this
+# module can confirm them). Do not treat the choices below as settled; expect
+# to revise this file after the first live boot.
+#
+# Design choice made instead of guessing a fixed interface name (Hetzner
+# hardcodes enp7s0): auto-detect the private-network NIC as "whichever
+# ethernet interface isn't the one carrying the default route", since the
+# actual predictable-name Scaleway assigns is unconfirmed.
+package_update: true
+packages:
+  - curl
+
+runcmd:
+  # Find the public (default-route) interface, then the private one (the
+  # other ethernet NIC). Bring the private one up via DHCP if it isn't
+  # already configured — mirrors the Hetzner workaround's *intent* without
+  # assuming Scaleway has the same metadata-route blackhole problem.
+  - |
+    PUBLIC_IFACE=$(ip -o -4 route show default | awk '{print $5}' | head -n1)
+    PRIVATE_IFACE=$(ls /sys/class/net | grep -v -E "^(lo|$PUBLIC_IFACE)$" | head -n1)
+    if [ -z "$PRIVATE_IFACE" ]; then
+      echo "FATAL: could not identify the private-network interface (only found: $(ls /sys/class/net | tr '\n' ' '))" >&2
+      exit 1
+    fi
+    echo "$PRIVATE_IFACE" > /tmp/flannel-iface
+    cat > /etc/netplan/60-private.yaml <<NETPLAN
+    network:
+      version: 2
+      ethernets:
+        $PRIVATE_IFACE:
+          dhcp4: true
+    NETPLAN
+    chmod 600 /etc/netplan/60-private.yaml
+    netplan apply
+    for i in $(seq 1 60); do
+      ip -o -4 addr show "$PRIVATE_IFACE" 2>/dev/null | grep -q inet && break
+      sleep 2
+    done
+
+  # Discover this node's own private and public IPv4 addresses at boot
+  # (Terraform can't template them into this file: they're only known after
+  # this server is created, and user_data must be resolved before creation).
+  #
+  # ASSUMED metadata endpoint (Scaleway's documented IMDS address) and JSON
+  # shape (public_ip.address) — UNVERIFIED, confirm on first real boot.
+  - |
+    FLANNEL_IFACE=$(cat /tmp/flannel-iface)
+    NODE_IP=""
+    for i in $(seq 1 30); do
+      NODE_IP=$(ip -o -4 addr show "$FLANNEL_IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+      [ -n "$NODE_IP" ] && break
+      sleep 2
+    done
+    [ -n "$NODE_IP" ] || { echo "FATAL: could not determine private IPv4 on $FLANNEL_IFACE" >&2; exit 1; }
+
+    PUBLIC_IP=""
+    for i in $(seq 1 30); do
+      PUBLIC_IP=$(curl -sf --max-time 5 "http://169.254.42.42/conf?format=json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["public_ip"]["address"])' 2>/dev/null) && [ -n "$PUBLIC_IP" ] && break
+      sleep 2
+    done
+    [ -n "$PUBLIC_IP" ] || { echo "FATAL: could not determine public IPv4 from metadata service" >&2; exit 1; }
+
+    echo "$NODE_IP" > /tmp/node-ip
+    curl -sfL https://get.k3s.io | \
+      INSTALL_K3S_CHANNEL="${k3s_version}" \
+      K3S_TOKEN="${k3s_token}" \
+      sh -s - server \
+        --disable traefik \
+        --disable servicelb \
+        --disable-cloud-controller \
+        --kubelet-arg=cloud-provider=external \
+        --node-ip=$NODE_IP \
+        --node-external-ip=$PUBLIC_IP \
+        --advertise-address=$NODE_IP \
+        --flannel-iface=$FLANNEL_IFACE \
+        --tls-san=$PUBLIC_IP \
+        --write-kubeconfig-mode=0644
+  - until k3s kubectl get nodes >/dev/null 2>&1; do sleep 5; done
+  - touch /tmp/k3s-ready

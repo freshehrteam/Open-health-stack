@@ -1,0 +1,42 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Or export TF_VAR_* env vars.
+#
+# Before `terraform init`, this env's remote state backend (see versions.tf)
+# also needs AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY set to your Scaleway
+# access/secret key pair, and the freshehr-tfstate-scaleway bucket to already
+# exist in nl-ams — the S3 backend doesn't create it.
+
+# ── Required ─────────────────────────────────────────────────────────────────
+# Scaleway API credentials (console → Identity and Access Management → API keys).
+# Prefer: export TF_VAR_scw_access_key="..." / TF_VAR_scw_secret_key="..."
+scw_access_key = "REPLACE_WITH_SCW_ACCESS_KEY"
+scw_secret_key = "REPLACE_WITH_SCW_SECRET_KEY"
+scw_project_id = "REPLACE_WITH_SCW_PROJECT_ID"
+
+# ── Cluster ──────────────────────────────────────────────────────────────────
+cluster_name       = "freshehr"
+region             = "nl-ams"
+zone               = "nl-ams-1"
+control_plane_type = "DEV1-M"
+agent_type         = "DEV1-L"
+agent_count        = 2
+image              = "ubuntu_jammy"
+
+# ── Access ───────────────────────────────────────────────────────────────────
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+# Lock SSH to your IP, e.g. ["203.0.113.4/32"]. Default is open — change it.
+admin_ssh_cidrs = ["0.0.0.0/0"]
+# k3s API (6443) is separate from SSH — safe to leave wide open (the default)
+# even with admin_ssh_cidrs locked down, since it requires a client cert to do
+# anything. Leaving it open is what lets CI (no fixed IP) run terraform apply.
+# k3s_api_cidrs = ["0.0.0.0/0"]
+
+# ── Apps / ingress ───────────────────────────────────────────────────────────
+domain            = "health.example.com" # must resolve to the LB IP (output after apply)
+letsencrypt_email = "you@example.com"
+
+# Three-phase apply: cluster only (install_apps=false, install_cloud_integration=false),
+# then CCM/CSI (install_apps=false, install_cloud_integration=true — the default),
+# then the app chart (both true, once you have a real domain). See main.tf.
+install_apps              = true
+install_cloud_integration = true
+kubeconfig_path           = "./kubeconfig"
