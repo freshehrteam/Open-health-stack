@@ -93,7 +93,7 @@ images:
     # Explicit release tag (not `latest`): produced by CI's type=semver on the
     # matching `v0.4.0` git tag. Keep in step with Chart.yaml version and publish
     # the tag before `terraform apply`, else the pod pulls a nonexistent image.
-    tag: "0.4.2"
+    tag: "0.4.4"
     pullPolicy: IfNotPresent
   # Data-only image: the EPS FHIRConnect mappings + OPT, copied into the openFHIR
   # pod by an initContainer (built from docker/openfhir/bootstrap.Dockerfile).
@@ -101,14 +101,14 @@ images:
   # the repository it points at is the EPS bundle.
   ipsMappings:
     repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings
-    tag: "0.4.2"
+    tag: "0.4.4"
     pullPolicy: IfNotPresent
   # hades FHIR terminology server (built from docker/hades/Dockerfile — the
   # upstream JAR version is pinned by that Dockerfile's ARG HADES_VERSION; this
   # tag is the team's release tag, same IMAGE_TAG= rule as the other images).
   hades:
     repository: ghcr.io/freshehrteam/hades
-    tag: "0.4.2"
+    tag: "0.4.4"
     pullPolicy: IfNotPresent
 imagePullSecrets: []
 

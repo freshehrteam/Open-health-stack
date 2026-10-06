@@ -47,13 +47,13 @@ clusterIssuer:
 images:
   hapi:
     repository: ghcr.io/freshehrteam/hapi-openfhir
-    tag: "0.4.2"
+    tag: "0.4.4"
   ipsMappings:
     repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings
-    tag: "0.4.2"
+    tag: "0.4.4"
   hades:
     repository: ghcr.io/freshehrteam/hades
-    tag: "0.4.2"
+    tag: "0.4.4"
 
 # Production HAPI sizing (matches patch-hapi-resources.yaml) + point HAPI at the
 # in-cluster openFHIR engine (local mode).
