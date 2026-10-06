@@ -207,7 +207,7 @@ ehrbase:
     # Pinned, not :latest — the MANAGEMENT_* env above is version-coupled (see
     # comment there), and an unpinned tag let the cluster and a local checkout
     # resolve to different EHRbase generations with opposite crash modes.
-    tag: 2.35.1
+    tag: 2.36.0
     pullPolicy: IfNotPresent
   env:
     DB_URL: jdbc:postgresql://postgres:5432/ehrbase
@@ -257,7 +257,7 @@ openfhir:
     repository: openfhir/openfhir-enterprise
     # Pinned — must match the compose default (docker/docker-compose.yml
     # OPENFHIR_IMAGE fallback).
-    tag: 3.0.1
+    tag: 3.0.2
     pullPolicy: IfNotPresent
   # EPS mappings initContainer image. Empty = fall back to .Values.images.ipsMappings.
   mappingsImage: {}
@@ -328,7 +328,7 @@ keycloak:
   replicas: 1
   image:
     repository: quay.io/keycloak/keycloak
-    tag: 26.7.3
+    tag: 26.8.0
     pullPolicy: IfNotPresent
   realm: freshehr
   resources: {}
@@ -358,7 +358,7 @@ oauth2Proxy:
   replicas: 1
   image:
     repository: quay.io/oauth2-proxy/oauth2-proxy
-    tag: v7.15.4
+    tag: v7.15.5
     pullPolicy: IfNotPresent
   resources: {}
   service:
