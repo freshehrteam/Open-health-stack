@@ -74,7 +74,7 @@ on:
       - ".github/workflows/deploy-scaleway.yml"
   workflow_dispatch: {} # run against any branch: gh workflow run deploy-scaleway.yml --ref <branch>
 
-# One apply at a time: a second run would hit the state lock, and its
+# One apply at a time: the S3 backend has no state locking, and a second run's
 # k3s_api_cidrs would drop the first runner's temporary API rule.
 concurrency:
   group: deploy-scaleway
