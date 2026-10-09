@@ -61,7 +61,6 @@ on:
       - "terraform/envs/scaleway/**"
       - "terraform/modules/scaleway-*/**"
       - "terraform/modules/k8s-apps/**"
-      - "terraform/cloud-init/scaleway-*"
       - "charts/health-stack/**"
       - "!charts/health-stack/values-hetzner.yaml"
       - "!charts/health-stack/values-dev.yaml"
