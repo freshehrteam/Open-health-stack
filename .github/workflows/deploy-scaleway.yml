@@ -79,12 +79,17 @@ jobs:
         with:
           terraform_wrapper: false
 
+      # Secrets go through env:, never ${{ }} inside run: — expansion there is
+      # script injection, and a " or $ in the value corrupts the file.
       - name: Seed kubeconfig + SSH public key (see header comment)
         working-directory: ${{ env.TF_DIR }}
+        env:
+          SCALEWAY_KUBECONFIG: ${{ secrets.SCALEWAY_KUBECONFIG }}
+          SCALEWAY_SSH_PUBLIC_KEY: ${{ secrets.SCALEWAY_SSH_PUBLIC_KEY }}
         run: |
           umask 077
-          printf '%s' "${{ secrets.SCALEWAY_KUBECONFIG }}" > ./kubeconfig
-          printf '%s' "${{ secrets.SCALEWAY_SSH_PUBLIC_KEY }}" > "$RUNNER_TEMP/scaleway.pub"
+          printf '%s' "$SCALEWAY_KUBECONFIG" > ./kubeconfig
+          printf '%s' "$SCALEWAY_SSH_PUBLIC_KEY" > "$RUNNER_TEMP/scaleway.pub"
 
       - name: terraform init
         working-directory: ${{ env.TF_DIR }}
