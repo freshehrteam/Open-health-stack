@@ -44,7 +44,8 @@
 #   TF_ADMIN_SSH_CIDRS — REQUIRED, a single CIDR (e.g. 203.0.113.4/32), the
 #     same IP as the one entry in your local terraform.tfvars' admin_ssh_cidrs
 #     list. The apply step below wraps it into the JSON list Terraform's
-#     list(string) var expects.
+#     list(string) var expects; an unset/invalid value fails at plan time
+#     (validation on admin_ssh_cidrs in variables.tf).
 # Repository variables (Settings → Secrets and variables → Actions → Variables):
 #   TF_DOMAIN, TF_LETSENCRYPT_EMAIL — same values as your local terraform.tfvars.
 #   DEPLOY_BRANCH — which branch auto-deploys on push (e.g. main). GitHub

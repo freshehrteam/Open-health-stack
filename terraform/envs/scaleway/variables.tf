@@ -83,6 +83,12 @@ variable "admin_ssh_cidrs" {
   description = "CIDRs allowed to SSH (port 22) to the nodes. Lock this down."
   type        = list(string)
   default     = ["0.0.0.0/0"]
+
+  # Fail at plan, not mid-apply: CI's unset TF_ADMIN_SSH_CIDRS secret becomes [""].
+  validation {
+    condition     = length(var.admin_ssh_cidrs) > 0 && alltrue([for c in var.admin_ssh_cidrs : can(cidrhost(c, 0))])
+    error_message = "admin_ssh_cidrs must be a non-empty list of CIDRs (e.g. [\"203.0.113.4/32\"]). In CI, check the TF_ADMIN_SSH_CIDRS secret is set."
+  }
 }
 
 variable "k3s_api_cidrs" {
