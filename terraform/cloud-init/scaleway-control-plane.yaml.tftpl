@@ -35,10 +35,19 @@ runcmd:
   # already configured — mirrors the Hetzner workaround's *intent* without
   # assuming Scaleway has the same metadata-route blackhole problem.
   - |
-    PUBLIC_IFACE=$(ip -o -4 route show default | awk '{print $5}' | head -n1)
-    PRIVATE_IFACE=$(ls /sys/class/net | grep -v -E "^(lo|$PUBLIC_IFACE)$" | head -n1)
-    if [ -z "$PRIVATE_IFACE" ]; then
-      echo "FATAL: could not identify the private-network interface (only found: $(ls /sys/class/net | tr '\n' ' '))" >&2
+    # Private NIC may attach after boot: retry 5m; non-empty PUBLIC_IFACE stops ^(lo|)$ picking the public NIC.
+    PUBLIC_IFACE=""
+    PRIVATE_IFACE=""
+    for i in $(seq 1 60); do
+      PUBLIC_IFACE=$(ip -o -4 route show default | awk '{print $5}' | head -n1)
+      if [ -n "$PUBLIC_IFACE" ]; then
+        PRIVATE_IFACE=$(ls /sys/class/net | grep -v -E "^(lo|$PUBLIC_IFACE)$" | head -n1)
+        [ -n "$PRIVATE_IFACE" ] && break
+      fi
+      sleep 5
+    done
+    if [ -z "$PUBLIC_IFACE" ] || [ -z "$PRIVATE_IFACE" ]; then
+      echo "FATAL: could not identify the public/private interfaces after 5m (public='$PUBLIC_IFACE', found: $(ls /sys/class/net | tr '\n' ' '))" >&2
       exit 1
     fi
     echo "$PRIVATE_IFACE" > /tmp/flannel-iface
