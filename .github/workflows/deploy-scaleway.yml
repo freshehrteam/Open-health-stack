@@ -17,13 +17,19 @@
 # only ever runs a plain `terraform apply` (phase 3 defaults), it does not
 # pass install_apps=false or install_cloud_integration=false.
 #
-# NETWORK NOTE: the k3s API (port 6443) needs to be reachable from wherever
-# this workflow runs. GitHub-hosted runners have no fixed IP, which is why
-# terraform/modules/scaleway-cluster's security group now has a separate
-# k3s_api_cidrs input (default 0.0.0.0/0, safe since 6443 requires a valid
-# client cert) instead of reusing admin_ssh_cidrs — don't lock k3s_api_cidrs
-# down to a specific IP unless this workflow also moves to a self-hosted
-# runner with that same fixed IP.
+# NETWORK NOTE: the k3s API (port 6443) is only open to the private network
+# and admin_ssh_cidrs (same as the Hetzner env), not to the internet. GitHub-
+# hosted runners have no fixed IP, so this workflow discovers the runner's
+# egress IP and opens 6443 to that /32 alone for the duration of the run:
+#   1. before terraform, a rule is added through the Scaleway API directly —
+#      terraform's plan-time refresh of helm_release/kubernetes_* already
+#      needs to reach the API, before terraform could change the security
+#      group itself;
+#   2. the same /32 is passed as k3s_api_cidrs, so the apply keeps that rule
+#      instead of removing it as drift;
+#   3. an always() step deletes it again afterwards, pass or fail.
+# The next apply (CI or local) sees the deleted rule as drift and reconciles
+# it; nothing is left open between runs.
 #
 # ── ONE-TIME SETUP ───────────────────────────────────────────────────────────
 # Repository secrets (Settings → Secrets and variables → Actions → Secrets):
@@ -44,9 +50,13 @@
 #   TF_ADMIN_SSH_CIDRS — REQUIRED, a single CIDR (e.g. 203.0.113.4/32), the
 #     same IP as the one entry in your local terraform.tfvars' admin_ssh_cidrs
 #     list. The apply step below wraps it into the JSON list Terraform's
-#     list(string) var expects.
+#     list(string) var expects; an unset/invalid value fails at plan time
+#     (validation on admin_ssh_cidrs in variables.tf).
 # Repository variables (Settings → Secrets and variables → Actions → Variables):
 #   TF_DOMAIN, TF_LETSENCRYPT_EMAIL — same values as your local terraform.tfvars.
+#   TF_CLUSTER_NAME, TF_ZONE — only if your terraform.tfvars overrides
+#     cluster_name / zone (defaults: freshehr, nl-ams-1). Used to find the
+#     security group for the temporary k3s API rule and passed to terraform.
 #   DEPLOY_BRANCH — which branch auto-deploys on push (e.g. main). GitHub
 #     Actions can't put an expression inside `on:`, so every push (matching
 #     the paths below) starts this workflow; the `deploy` job then no-ops
@@ -68,8 +78,16 @@ on:
       - ".github/workflows/deploy-scaleway.yml"
   workflow_dispatch: {} # run against any branch: gh workflow run deploy-scaleway.yml --ref <branch>
 
+# One apply at a time: the S3 backend has no state locking, and a second run's
+# k3s_api_cidrs would drop the first runner's temporary API rule.
+concurrency:
+  group: deploy-scaleway
+  cancel-in-progress: false
+
 env:
   TF_DIR: terraform/envs/scaleway
+  CLUSTER_NAME: ${{ vars.TF_CLUSTER_NAME || 'freshehr' }}
+  SCW_ZONE: ${{ vars.TF_ZONE || 'nl-ams-1' }}
 
 jobs:
   deploy:
@@ -93,6 +111,35 @@ jobs:
           printf '%s' "$SCALEWAY_KUBECONFIG" > ./kubeconfig
           printf '%s' "$SCALEWAY_SSH_PUBLIC_KEY" > "$RUNNER_TEMP/scaleway.pub"
 
+      # See NETWORK NOTE in the header.
+      - name: Open k3s API to this runner
+        id: api_access
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          API="https://api.scaleway.com/instance/v1/zones/$SCW_ZONE"
+          RUNNER_IP=$(curl -4 -sSf --retry 3 https://api.ipify.org)
+          SG_ID=$(curl -sSf -H "X-Auth-Token: $SCW_SECRET_KEY" \
+            "$API/security_groups?project=$SCW_PROJECT_ID&name=$CLUSTER_NAME-sg" \
+            | jq -r --arg n "$CLUSTER_NAME-sg" '[.security_groups[] | select(.name == $n)] | if length == 1 then .[0].id else error("expected exactly one security group named \($n), found \(length)") end')
+          echo "runner_ip=$RUNNER_IP" >> "$GITHUB_OUTPUT"
+          echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
+          curl -sSf -o /dev/null -H "X-Auth-Token: $SCW_SECRET_KEY" -H "Content-Type: application/json" \
+            -X POST "$API/security_groups/$SG_ID/rules" \
+            -d "{\"protocol\":\"TCP\",\"direction\":\"inbound\",\"action\":\"accept\",\"ip_range\":\"$RUNNER_IP/32\",\"dest_port_from\":6443,\"dest_port_to\":6443}"
+          # Wait for the rule to take effect: any HTTP status (401 included)
+          # means the TCP connection got through.
+          SERVER=$(awk '/server:/ {print $2; exit}' ./kubeconfig)
+          for i in $(seq 1 30); do
+            curl -sk -o /dev/null --max-time 5 "$SERVER/livez" && exit 0
+            sleep 2
+          done
+          echo "k3s API at $SERVER still unreachable from $RUNNER_IP after 60s" >&2
+          exit 1
+
       - name: terraform init
         working-directory: ${{ env.TF_DIR }}
         env:
@@ -112,5 +159,27 @@ jobs:
           TF_VAR_kubeconfig_path: ./kubeconfig
           TF_VAR_domain: ${{ vars.TF_DOMAIN }}
           TF_VAR_letsencrypt_email: ${{ vars.TF_LETSENCRYPT_EMAIL }}
+          TF_VAR_cluster_name: ${{ env.CLUSTER_NAME }}
+          TF_VAR_zone: ${{ env.SCW_ZONE }}
           TF_VAR_admin_ssh_cidrs: '["${{ secrets.TF_ADMIN_SSH_CIDRS }}"]'
+          # Keep the temporary rule in the desired state for this apply.
+          TF_VAR_k3s_api_cidrs: '["${{ steps.api_access.outputs.runner_ip }}/32"]'
         run: terraform apply -input=false -auto-approve
+
+      - name: Close k3s API to this runner
+        if: always() && steps.api_access.outputs.sg_id != ''
+        env:
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          SG_ID: ${{ steps.api_access.outputs.sg_id }}
+          RUNNER_IP: ${{ steps.api_access.outputs.runner_ip }}
+        run: |
+          set -euo pipefail
+          API="https://api.scaleway.com/instance/v1/zones/$SCW_ZONE/security_groups/$SG_ID/rules"
+          # Delete by match, not by the id the open step got back: the apply
+          # may have rewritten the rule list (same rule, new id).
+          RULE_IDS=$(curl -sSf -H "X-Auth-Token: $SCW_SECRET_KEY" "$API?per_page=100" \
+            | jq -r --arg ip "$RUNNER_IP" '.rules[] | select(.direction == "inbound" and .dest_port_from == 6443 and (.ip_range == $ip or .ip_range == ($ip + "/32"))) | .id')
+          for id in $RULE_IDS; do
+            curl -sSf -o /dev/null -H "X-Auth-Token: $SCW_SECRET_KEY" -X DELETE "$API/$id"
+            echo "removed rule $id"
+          done
