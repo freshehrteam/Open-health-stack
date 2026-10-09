@@ -154,6 +154,12 @@ resource "scaleway_instance_security_group" "this" {
   }
 }
 
+# ── Control-plane public IP ──────────────────────────────────────────────────
+# Reserved so a stop/start keeps the kubeconfig, k3s --tls-san and CI secret valid; agents stay dynamic.
+resource "scaleway_instance_ip" "control_plane" {
+  zone = var.zone
+}
+
 # ── Control-plane server ─────────────────────────────────────────────────────
 # Its own private IP is unknown until after creation (private_ips is computed,
 # and user_data must be resolvable at create time) — cloud-init self-discovers
@@ -165,7 +171,7 @@ resource "scaleway_instance_server" "control_plane" {
   image             = var.image
   zone              = var.zone
   security_group_id = scaleway_instance_security_group.this.id
-  enable_dynamic_ip = true # unlike hcloud_server, Scaleway servers get no public IP by default
+  ip_id             = scaleway_instance_ip.control_plane.id
 
   root_volume {
     volume_type = "sbs_volume"
@@ -243,11 +249,12 @@ resource "scaleway_instance_server" "agent" {
 resource "null_resource" "kubeconfig" {
   triggers = {
     control_plane_id = scaleway_instance_server.control_plane.id
+    control_plane_ip = scaleway_instance_ip.control_plane.address
   }
 
   connection {
     type    = "ssh"
-    host    = scaleway_instance_server.control_plane.public_ips[0].address
+    host    = scaleway_instance_ip.control_plane.address
     user    = "root"
     agent   = true
     timeout = "5m"
@@ -275,8 +282,8 @@ resource "null_resource" "kubeconfig" {
     command = <<-EOT
       set -e
       scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        root@${scaleway_instance_server.control_plane.public_ips[0].address}:/etc/rancher/k3s/k3s.yaml ${var.kubeconfig_path}
-      sed -i.bak 's#https://127.0.0.1:6443#https://${scaleway_instance_server.control_plane.public_ips[0].address}:6443#g' ${var.kubeconfig_path}
+        root@${scaleway_instance_ip.control_plane.address}:/etc/rancher/k3s/k3s.yaml ${var.kubeconfig_path}
+      sed -i.bak 's#https://127.0.0.1:6443#https://${scaleway_instance_ip.control_plane.address}:6443#g' ${var.kubeconfig_path}
       rm -f ${var.kubeconfig_path}.bak
       chmod 600 ${var.kubeconfig_path}
     EOT
@@ -286,7 +293,7 @@ resource "null_resource" "kubeconfig" {
 }
 
 # ── Outputs ──────────────────────────────────────────────────────────────────
-output "control_plane_ipv4" { value = scaleway_instance_server.control_plane.public_ips[0].address }
+output "control_plane_ipv4" { value = scaleway_instance_ip.control_plane.address }
 output "agent_ipv4s" { value = [for s in scaleway_instance_server.agent : s.public_ips[0].address] }
 output "control_plane_private_ip" { value = local.control_plane_private_ipv4 }
 output "agent_private_ips" { value = local.agent_private_ipv4s }
