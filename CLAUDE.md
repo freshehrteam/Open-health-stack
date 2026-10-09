@@ -48,7 +48,9 @@ Compose and chart MUST declare the same tag for shared components;
 
 ## Code style
 
-- Keep code comments minimal: none unless the code is non-obvious, and one line at most.
+- Keep code comments minimal: none unless the code is non-obvious, and as short
+  as the point allows. Don't put the reasoning or history behind the code in
+  comments; that belongs in the PR, which readers can find via `git blame`.
 
 ## Hard constraints (learned the hard way — do not "simplify" these away)
 
