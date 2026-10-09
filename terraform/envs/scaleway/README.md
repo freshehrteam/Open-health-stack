@@ -104,27 +104,33 @@ terraform apply
   network, `admin_ssh_cidrs` and (in CI) the runner's own /32. A local apply
   must run from an IP in `admin_ssh_cidrs`.
 - **The control-plane moves from a dynamic to a reserved IP**, so its public
-  IP changes once. The kubeconfig is re-fetched automatically (the fetch is
-  triggered by the IP), but k3s' serving cert still carries the old IP as
-  `--tls-san`, so the k8s/helm providers can't connect until that is fixed.
-  Note the old IP first (`terraform output control_plane_ipv4`), then run
-  the targeted plan below and check that the server is **updated in place,
-  not replaced**. Don't use the phase-1 `install_*=false` flags here: on a
-  live cluster they plan to destroy the add-ons.
+  IP changes once. A plain apply fails with `failed to detach IP: … No
+  reservation for ip`: the provider tries to detach the dynamic IP, which the
+  API refuses. Swap it via the API instead (verified on a routed-IP server;
+  SSH and the LB stay up, only the external k3s API is briefly unreachable).
+  Note the old IP first (`terraform output control_plane_ipv4`), make sure
+  `/tmp/k3s-ready` exists on the node (a reboot clears it), then:
 
   ```bash
+  terraform apply -target=module.cluster.scaleway_instance_ip.control_plane
+  # attach it; on a routed-IP server this replaces the dynamic IP
+  curl -X PATCH -H "X-Auth-Token: $SCW_SECRET_KEY" -H "Content-Type: application/json" \
+    -d '{"server":"SERVER_ID"}' \
+    https://api.scaleway.com/instance/v1/zones/ZONE/ips/IP_ID
+  # now only enable_dynamic_ip true -> false + the kubeconfig re-fetch
   terraform apply \
-    -target=module.cluster.scaleway_instance_ip.control_plane \
     -target=module.cluster.scaleway_instance_server.control_plane \
     -target=module.cluster.null_resource.kubeconfig
   ```
 
   Then on the node (`ssh root@NEW_IP`), replace the old IP with the new one in
   `/etc/systemd/system/k3s.service` (`--tls-san`, `--node-external-ip`) and
-  run `systemctl daemon-reload && systemctl restart k3s`. Finish with a plain
-  `terraform apply`, check `kubectl get nodes`, and update the
-  `SCALEWAY_KUBECONFIG` CI secret from the re-fetched `kubeconfig`. A cluster
-  created after this change gets the reserved IP from the start.
+  run `systemctl daemon-reload && systemctl restart k3s`. Check
+  `kubectl get nodes`, run a plain `terraform plan`/`apply`, and update the
+  `SCALEWAY_KUBECONFIG` CI secret from the re-fetched `kubeconfig`. Don't use
+  the phase-1 `install_*=false` flags here: on a live cluster they plan to
+  destroy the add-ons. A cluster created after this change gets the reserved
+  IP from the start.
 
 ## Status
 
