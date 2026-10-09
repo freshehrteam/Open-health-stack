@@ -98,6 +98,12 @@ terraform apply
   # phase 3: add-ons + health-stack chart (needs a real domain)
 ```
 
+### Applying to an existing cluster
+
+- **k3s API (6443) is no longer open to the internet** — only the private
+  network, `admin_ssh_cidrs` and (in CI) the runner's own /32. A local apply
+  must run from an IP in `admin_ssh_cidrs`.
+
 ## Status
 
 Scaffolded and schema-validated against a live Scaleway project. The
