@@ -86,6 +86,20 @@ variable "ingress_service_type" {
   default = "NodePort"
 }
 
+# ingress-nginx controller kind. DaemonSet puts a controller pod on every
+# schedulable node, so with externalTrafficPolicy: Local every LB backend
+# (those nodes' NodePorts) passes its health check and ingress survives the
+# loss of a node. "Deployment" runs a single replica: only the node hosting it
+# is a healthy backend.
+variable "ingress_controller_kind" {
+  type    = string
+  default = "DaemonSet"
+  validation {
+    condition     = contains(["DaemonSet", "Deployment"], var.ingress_controller_kind)
+    error_message = "ingress_controller_kind must be \"DaemonSet\" or \"Deployment\"."
+  }
+}
+
 # ============================================================================
 # Cluster add-ons: ingress-nginx + cert-manager
 # ============================================================================
@@ -101,6 +115,11 @@ resource "helm_release" "ingress_nginx" {
   repository       = "https://kubernetes.github.io/ingress-nginx"
   chart            = "ingress-nginx"
   atomic           = true
+
+  set {
+    name  = "controller.kind"
+    value = var.ingress_controller_kind
+  }
 
   set {
     name  = "controller.service.type"
@@ -123,7 +142,9 @@ resource "helm_release" "ingress_nginx" {
     }
   }
 
-  # Preserve client source IPs through the TCP LB.
+  # Preserve client source IPs through the TCP LB. Side effect: a node's
+  # NodePort only answers if that node runs a controller pod, which is why
+  # controller.kind defaults to DaemonSet (see ingress_controller_kind).
   set {
     name  = "controller.service.externalTrafficPolicy"
     value = "Local"

@@ -52,10 +52,10 @@ module "lb" {
 
   # Scaleway has no label-selector target — backends take the actual node
   # private IPs, only known once the cluster module has been applied.
-  target_ips = concat(
-    [module.cluster.control_plane_private_ip],
-    module.cluster.agent_private_ips,
-  )
+  # Agents only: ingress-nginx uses externalTrafficPolicy: Local, so a backend
+  # passes the health check only if it hosts a controller pod, and the
+  # control plane is tainted (CriticalAddonsOnly) so it never does.
+  target_ips = module.cluster.agent_private_ips
 
   http_node_port  = 30080
   https_node_port = 30443

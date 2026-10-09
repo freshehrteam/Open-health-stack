@@ -9,7 +9,7 @@ variable "private_network_id" { type = string }
 
 # Scaleway has no label-selector target like hcloud_load_balancer_target —
 # backends take a plain list of server IPs, computed from the cluster
-# module's outputs at the env level (control-plane + all agents). This
+# module's outputs at the env level (the agents; see envs/scaleway). This
 # creates a real apply-order dependency (cluster before lb) that Hetzner's
 # label-selector approach didn't have.
 variable "target_ips" { type = list(string) }
