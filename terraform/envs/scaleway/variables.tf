@@ -80,21 +80,30 @@ variable "ssh_public_key_path" {
 }
 
 variable "admin_ssh_cidrs" {
-  description = "CIDRs allowed to SSH (port 22) to the nodes. Lock this down."
+  description = "CIDRs allowed to SSH (port 22) and reach the k3s API (port 6443). Lock this down."
   type        = list(string)
   default     = ["0.0.0.0/0"]
+
+  # Fail at plan, not mid-apply: CI's unset TF_ADMIN_SSH_CIDRS secret becomes [""].
+  validation {
+    condition     = length(var.admin_ssh_cidrs) > 0 && alltrue([for c in var.admin_ssh_cidrs : can(cidrhost(c, 0))])
+    error_message = "admin_ssh_cidrs must be a non-empty list of CIDRs (e.g. [\"203.0.113.4/32\"]). In CI, check the TF_ADMIN_SSH_CIDRS secret is set."
+  }
 }
 
 variable "k3s_api_cidrs" {
   description = <<-EOT
-    CIDRs allowed to reach the k3s API (port 6443), separate from
-    admin_ssh_cidrs. Safe to leave wide open (the default) even when
-    admin_ssh_cidrs is locked down: port 6443 requires a valid client cert
-    (kubeconfig) to do anything, and this is what lets a CI runner with no
-    fixed IP run `terraform apply` against the cluster.
+    Extra CIDRs allowed to reach the k3s API (port 6443), on top of the
+    private network and admin_ssh_cidrs. Empty by default (the API is not
+    exposed to the internet); CI passes its runner's /32 for one apply.
   EOT
   type        = list(string)
-  default     = ["0.0.0.0/0"]
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.k3s_api_cidrs : can(cidrhost(c, 0))])
+    error_message = "k3s_api_cidrs must contain only valid CIDRs (e.g. \"203.0.113.4/32\")."
+  }
 }
 
 # ── Networking ───────────────────────────────────────────────────────────────

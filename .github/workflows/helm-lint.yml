@@ -46,7 +46,7 @@ jobs:
           # noise that would hide a real one. See that step for why they exist.
           DUMMY='--set secrets.values.keycloak.API_CLIENT_SECRET=ci --set secrets.values.keycloak.HAPI_SVC_SECRET=ci --set secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET=ci --set secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_PASSWORD=ci --set secrets.values.keycloak.KC_DB_PASSWORD=ci --set secrets.values.keycloak.OAUTH2_PROXY_COOKIE_SECRET=ci'
           helm lint "$CHART_DIR" $DUMMY
-          for f in hetzner dev; do
+          for f in hetzner scaleway dev; do
             echo "── lint values-$f ──"
             helm lint "$CHART_DIR" $DUMMY -f "$CHART_DIR/values-$f.yaml"
           done
@@ -76,6 +76,6 @@ jobs:
           }
           render
           render --set secrets.create=true
-          for f in hetzner dev; do
+          for f in hetzner scaleway dev; do
             render -f "$CHART_DIR/values-$f.yaml"
           done

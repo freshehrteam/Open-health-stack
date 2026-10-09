@@ -98,8 +98,11 @@ terraform apply
   # phase 3: add-ons + health-stack chart (needs a real domain)
 ```
 
-### Applying to a cluster created before the reserved control-plane IP
+### Applying to an existing cluster
 
+- **k3s API (6443) is no longer open to the internet** — only the private
+  network, `admin_ssh_cidrs` and (in CI) the runner's own /32. A local apply
+  must run from an IP in `admin_ssh_cidrs`.
 - **The control-plane moves from a dynamic to a reserved IP**, so its public
   IP changes once. The kubeconfig is re-fetched automatically (the fetch is
   triggered by the IP), but k3s' serving cert still carries the old IP as
