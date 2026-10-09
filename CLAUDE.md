@@ -46,6 +46,10 @@ Compose and chart MUST declare the same tag for shared components;
 | hades (jar)      | `docker/hades/Dockerfile:21` (`ARG HADES_VERSION` + `HADES_SHA256`, bumped in lockstep) | — | the real upstream pin; fetch the release's `.jar.sha256` asset |
 | hades (pushed)   | `docker/docker-compose.yml:320`    | `charts/health-stack/values.yaml:110` + `values-hetzner.yaml:55` | team image `ghcr.io/freshehrteam/hades`; same explicit-tag rule as hapi (pushed) |
 
+## Code style
+
+- Keep code comments minimal: none unless the code is non-obvious, and one line at most.
+
 ## Hard constraints (learned the hard way — do not "simplify" these away)
 
 - **openFHIR must stay `openfhir/openfhir-enterprise`**, never the community
