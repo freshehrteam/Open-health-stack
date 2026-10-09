@@ -59,8 +59,12 @@ on:
   push:
     paths:
       - "terraform/envs/scaleway/**"
-      - "terraform/modules/**"
+      - "terraform/modules/scaleway-*/**"
+      - "terraform/modules/k8s-apps/**"
       - "charts/health-stack/**"
+      - "!charts/health-stack/values-hetzner.yaml"
+      - "!charts/health-stack/values-dev.yaml"
+      - "!charts/health-stack/README.md"
       - ".github/workflows/deploy-scaleway.yml"
   workflow_dispatch: {} # run against any branch: gh workflow run deploy-scaleway.yml --ref <branch>
 
@@ -81,10 +85,13 @@ jobs:
 
       - name: Seed kubeconfig + SSH public key (see header comment)
         working-directory: ${{ env.TF_DIR }}
+        env:
+          SCALEWAY_KUBECONFIG: ${{ secrets.SCALEWAY_KUBECONFIG }}
+          SCALEWAY_SSH_PUBLIC_KEY: ${{ secrets.SCALEWAY_SSH_PUBLIC_KEY }}
         run: |
           umask 077
-          printf '%s' "${{ secrets.SCALEWAY_KUBECONFIG }}" > ./kubeconfig
-          printf '%s' "${{ secrets.SCALEWAY_SSH_PUBLIC_KEY }}" > "$RUNNER_TEMP/scaleway.pub"
+          printf '%s' "$SCALEWAY_KUBECONFIG" > ./kubeconfig
+          printf '%s' "$SCALEWAY_SSH_PUBLIC_KEY" > "$RUNNER_TEMP/scaleway.pub"
 
       - name: terraform init
         working-directory: ${{ env.TF_DIR }}
