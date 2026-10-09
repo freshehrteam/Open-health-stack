@@ -57,10 +57,16 @@ name: deploy-scaleway
 
 on:
   push:
+    # Only what envs/scaleway reads; negations must follow the include.
     paths:
       - "terraform/envs/scaleway/**"
-      - "terraform/modules/**"
+      - "terraform/modules/scaleway-*/**"
+      - "terraform/modules/k8s-apps/**"
+      - "terraform/cloud-init/scaleway-*"
       - "charts/health-stack/**"
+      - "!charts/health-stack/values-hetzner.yaml"
+      - "!charts/health-stack/values-dev.yaml"
+      - "!charts/health-stack/README.md"
       - ".github/workflows/deploy-scaleway.yml"
   workflow_dispatch: {} # run against any branch: gh workflow run deploy-scaleway.yml --ref <branch>
 
