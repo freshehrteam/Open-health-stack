@@ -73,7 +73,7 @@ services:
   ehrbase:
     # Pinned, not :latest — matches the Helm chart (values.yaml ehrbase.image.tag);
     # the MANAGEMENT_* env below is version-coupled to this tag.
-    image: ehrbase/ehrbase:2.36.0
+    image: ehrbase/ehrbase:2.37.0
     container_name: freshehr-ehrbase
     # Direct host port (8082:8080) lives in docker-compose.override.yml.
     environment:
@@ -127,7 +127,7 @@ services:
 
   # ── Keycloak (OIDC identity provider) ─────────────────────────────────────
   keycloak:
-    image: quay.io/keycloak/keycloak:26.8.0
+    image: quay.io/keycloak/keycloak:26.8.1
     container_name: freshehr-keycloak
     command: ["start-dev", "--import-realm"]
     ports:
@@ -273,7 +273,7 @@ services:
     # FhirConnectModelRepository" under a postgres config.
     # Pinned (matches the Helm chart openfhir.image.tag); OPENFHIR_IMAGE still
     # overrides for local engine builds.
-    image: ${OPENFHIR_IMAGE:-openfhir/openfhir-enterprise:3.0.2}
+    image: ${OPENFHIR_IMAGE:-openfhir/openfhir-enterprise:3.0.4}
     container_name: freshehr-openfhir
     # Direct host port (8083:8080) lives in docker-compose.override.yml.
     environment:
@@ -317,7 +317,7 @@ services:
   hades:
     build:
       context: ./hades
-    image: ${HADES_IMAGE:-ghcr.io/freshehrteam/hades:0.4.2}
+    image: ${HADES_IMAGE:-ghcr.io/freshehrteam/hades:0.4.5}
     container_name: freshehr-hades
     # No Postgres wiring on purpose: hades keeps its terminology in local *.db
     # files on the volume below (upstream hermes storage), not a SQL database.
